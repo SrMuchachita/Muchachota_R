@@ -37,6 +37,7 @@ typedef struct
     uint16_t ina_voltage;   // 30004 - 0x0003
     uint16_t ina_current;   // 30005 - 0x0004
     uint16_t ina_power;     // 30006 - 0x0005
+    uint16_t serial[6];     // 30007-30012 - 0x0006-0x000B  "RD90R-XXXXXX" (2 ASCII chars por registro)
 } mb_input_reg_t;
 #pragma pack(pop)
 

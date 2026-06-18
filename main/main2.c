@@ -65,6 +65,8 @@
 #define MB_SLAVE_ADDR        (0x0A)
 #define MB_SLAVE_BAUD        (115200)
 #define MB_FIRMWARE_REVISION (0x0100)
+#define DEVICE_SERIAL_PREFIX "RD90R"
+#define DEVICE_SERIAL_SUFFIX "SAPE01"    // <- Cambiar por el numero serial del robot
 
 
 //*****************************************DEFINICIONES SYSTEM MODE**************************************************/
@@ -112,7 +114,7 @@
 #define PWM_PERIOD_TICKS   (PWM_RESOLUTION_HZ / PWM_FREQ_HZ)  // ← no cambia (se calcula solo = 10000)
 #define MOTOR_COUNT        (4)
 #define MOTOR_MAX_PWM      500     // ← era 1000
-#define RAMP_STEP          5       // ← era 10
+#define RAMP_STEP          10       // ← no cambia, con PWM_MAX 500 da una rampa suave de 50 pasos (500/10)
 #define TASK_PERIOD_MS     20        // ← no cambia
 /*500 / 10 = 50 pasos × 20ms = solo 1 segundo*/
 
@@ -248,6 +250,8 @@ static float imu_calibration_offset_pitch = 0.0f;
 static float imu_calibration_offset_roll = 0.0f;
 static bool imu_calibration_enabled = false;
 
+static char device_serial[16] = {0};
+
 i2c_master_bus_handle_t i2c1_handle   = NULL;
 icm42670_handle_t dev_icm42670_handle = NULL;
 ina260_t dev_ina260_handle            = {0};
@@ -259,7 +263,16 @@ servo_handle_t servo2;
 //**************************************APP MAIN******************************************************/
 void app_main(void)
 {
+    snprintf(device_serial, sizeof(device_serial), DEVICE_SERIAL_PREFIX "-" DEVICE_SERIAL_SUFFIX);
+    ESP_LOGI(TAG, "Serial: %s", device_serial);
+
     vHardwareInit();
+
+    // Cargar serial en registros Modbus (30007-30012), 2 chars ASCII por registro
+    for (int i = 0; i < 6; i++) {
+        mb_input_reg.serial[i] = ((uint16_t)(uint8_t)device_serial[i * 2] << 8)
+                                | (uint8_t)device_serial[i * 2 + 1];
+    }
 
     xEventGroupHoldingReg = xEventGroupCreate();
     if (xEventGroupHoldingReg == NULL) {
@@ -747,8 +760,8 @@ void vTaskImuMonitor(void *pvParameters)
         static int log_counter = 0;
         if (log_counter++ >= 5) {
             log_counter = 0;
-            ESP_LOGI(TAG, "IMU: pitch=%.2f° roll=%.2f° temp=%.1f°C", 
-                     final_pitch, final_roll, temperature);
+            ESP_LOGI(TAG, "[%s] IMU: pitch=%.2f° roll=%.2f° temp=%.1f°C",
+                     device_serial, final_pitch, final_roll, temperature);
         }
 
         // [FIX-14] Aumentar delay entre ciclos de 100ms a 200ms
