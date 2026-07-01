@@ -66,8 +66,8 @@
 #define MB_SLAVE_BAUD        (115200)
 #define MB_FIRMWARE_REVISION (0x0100)
 #define DEVICE_SERIAL_PREFIX "RD90R"
-#define DEVICE_SERIAL_SUFFIX "SAPE01"    // <- Cambiar por el numero serial del robot
-
+#define DEVICE_SERIAL_SUFFIX "260003"    // <- Cambiar por el numero serial del robot
+/*Formato: RD90R-262501 (26 = año 2026, 0001 = robot número 1 de esa semana)*/
 
 //*****************************************DEFINICIONES SYSTEM MODE**************************************************/
 #define MB_SYSTEM_START      (0x07D0)
@@ -113,7 +113,7 @@
 #define PWM_RESOLUTION_HZ  10000000  // ← no cambia
 #define PWM_PERIOD_TICKS   (PWM_RESOLUTION_HZ / PWM_FREQ_HZ)  // ← no cambia (se calcula solo = 10000)
 #define MOTOR_COUNT        (4)
-#define MOTOR_MAX_PWM      500     // ← era 1000
+#define MOTOR_MAX_PWM      1000     // ← era 1000
 #define RAMP_STEP          10       // ← no cambia, con PWM_MAX 500 da una rampa suave de 50 pasos (500/10)
 #define TASK_PERIOD_MS     20        // ← no cambia
 /*500 / 10 = 50 pasos × 20ms = solo 1 segundo*/
