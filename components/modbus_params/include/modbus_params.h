@@ -23,7 +23,8 @@ typedef struct
     uint16_t srv1_angle;    // 40003 - 0x0002
     uint16_t srv2_angle;    // 40004 - 0x0003
     uint16_t led_pwm;       // 40005 - 0x0004
-    uint16_t fw_version;    // 40006 - 0x0005
+    uint16_t srv3_angle;    // 40006 - 0x0005  (servo 270°: rango 0-270)
+    uint16_t fw_version;    // 40007 - 0x0006
 } mb_holding_reg_t;
 #pragma pack(pop)
 

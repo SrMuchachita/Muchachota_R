@@ -37,6 +37,13 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 
+// WiFi + OTA
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "nvs_flash.h"
+#include "ota_http.h"
+
 // ESP-IDF Drivers
 #include "driver/gptimer.h"
 #include "driver/i2c_master.h"
@@ -55,6 +62,13 @@
 #include "icm42670.h"
 #include "servo_motor.h"
 
+
+//*****************************************WIFI + OTA*********************************************************/
+#define WIFI_SSID        "WTP TALLER"       /* <- Cambiar */
+#define WIFI_PASS        "24012024"         /* <- Cambiar */
+#define OTA_VERSION_URL  "https://raw.githubusercontent.com/SrMuchachita/Muchachota_R/main/version.json"
+#define OTA_FIRMWARE_URL "https://github.com/SrMuchachita/Muchachota_R/releases/latest/download/firmware.bin"
+#define OTA_CHECK        20                   /* segundos entre chequeos */
 
 //*****************************************RECURSOS DE MODULO MAIN************************************************/
 #define TASK_SIZE            (6 * 1024)
@@ -75,11 +89,16 @@
 
 
 //*****************************************DEFINICIONES GPIO*********************************************************/
-#define DOUT0   41
 #define DOUT1   40
 #define DOUT2   39
 #define DOUT3   38
-#define DOUT_MASK_CONFIG     ((1ULL << DOUT0)|(1ULL << DOUT1)|(1ULL << DOUT2)|(1ULL << DOUT3))
+#define DOUT_MASK_CONFIG     ((1ULL << DOUT1)|(1ULL << DOUT2)|(1ULL << DOUT3))
+
+#define LED_IO45   45
+#define LED_IO46   46
+#define LED_IO_MASK_CONFIG   ((1ULL << LED_IO45)|(1ULL << LED_IO46))
+#define LED_IO45_ENCENDIDO_AL_INICIO   0   // 1 = LED IO45 prendido al arrancar, 0 = apagado
+#define LED_IO46_ENCENDIDO_AL_INICIO   1   // 1 = LED IO46 prendido al arrancar, 0 = apagado
 
 
 //*****************************************PINOUT MOTORES DC ******************************************************/
@@ -121,6 +140,8 @@
 //*****************************************PINOUT SERVOS******************************************************/
 #define SERVO1_CH0_PIN   12
 #define SERVO2_CH1_PIN   11
+#define SERVO3_CH3_PIN      41
+#define SERVO3_MAX_DEGREE   270   // Servo 3 es de 270°: registro 0-180 -> 0°-270° fisico
 
 
 //*****************************************PINOUT PWM LED******************************************************/
@@ -258,11 +279,65 @@ ina260_t dev_ina260_handle            = {0};
 
 servo_handle_t servo1;
 servo_handle_t servo2;
+servo_handle_t servo3;
 
+
+//**************************************WIFI + OTA****************************************************/
+
+static void wifi_event_handler(void *arg, esp_event_base_t base,
+                               int32_t id, void *data)
+{
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        esp_wifi_connect();
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
+        ESP_LOGI(TAG, "WiFi conectado. IP: " IPSTR, IP2STR(&e->ip_info.ip));
+        ota_http_notify_connected();
+    }
+}
+
+static void wifi_init(void)
+{
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL, NULL));
+    wifi_config_t wifi_cfg = {
+        .sta = { .ssid = WIFI_SSID, .password = WIFI_PASS },
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_LOGI(TAG, "Conectando a '%s'...", WIFI_SSID);
+}
 
 //**************************************APP MAIN******************************************************/
 void app_main(void)
 {
+    /* NVS — obligatorio antes de WiFi */
+    esp_err_t nvs_ret = nvs_flash_init();
+    if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_ret);
+
+    /* WiFi + OTA en segundo plano */
+    wifi_init();
+    ota_http_config_t ota_cfg = {
+        .version_url        = OTA_VERSION_URL,
+        .firmware_url       = OTA_FIRMWARE_URL,
+        .check_interval_sec = OTA_CHECK,
+    };
+    ota_http_start(&ota_cfg);
+
     snprintf(device_serial, sizeof(device_serial), DEVICE_SERIAL_PREFIX "-" DEVICE_SERIAL_SUFFIX);
     ESP_LOGI(TAG, "Serial: %s", device_serial);
 
@@ -332,8 +407,8 @@ void vTaskModbusEvents(void *pvParameters)
                     last_motor_activity_time = esp_timer_get_time() / 1000;
                     portEXIT_CRITICAL(&paramLock);
                 }
-                // Registros 2-3: Servos
-                else if (regInfo.mb_offset <= 3) {
+                // Registros 2-3-5: Servos
+                else if (regInfo.mb_offset <= 3 || regInfo.mb_offset == 5) {
                     xEventGroupSetBits(xEventGroupHoldingReg, MB_REG_HOLDING_SERVO_BIT);
                 }
                 // Registro 4: LED
@@ -558,7 +633,7 @@ void vTaskMotorsControl(void *pvParameters)
 
 void vTaskServosControl(void *pvParameters)
 {
-    uint16_t angle1, angle2;
+    uint16_t angle1, angle2, angle3;
 
     while (1)
     {
@@ -571,13 +646,20 @@ void vTaskServosControl(void *pvParameters)
         portENTER_CRITICAL(&paramLock);
         angle1 = mb_holding_reg.srv1_angle;
         angle2 = mb_holding_reg.srv2_angle;
+        angle3 = mb_holding_reg.srv3_angle;
         portEXIT_CRITICAL(&paramLock);
 
         if (angle1 > 180) angle1 = 180;
         if (angle2 > 180) angle2 = 180;
+        if (angle3 > SERVO3_MAX_DEGREE) angle3 = SERVO3_MAX_DEGREE;
 
         servo_set_angle(servo1, angle1);
         servo_set_angle(servo2, angle2);
+
+        // Servo 3 es de 270°: 1 grado de registro = 1 grado fisico (rango 0-270)
+        uint32_t pulse3 = SERVO_MIN_PULSEWIDTH_US +
+            ((SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) * angle3) / SERVO3_MAX_DEGREE;
+        servo_set_pulse_us(servo3, pulse3);
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -783,12 +865,6 @@ void vTaskDigitalOutput(void *pvParameters)
                                      pdFALSE,
                                      portMAX_DELAY);
 
-        if (uxBits & MB_REG_COIL0_WR_BIT) {
-            portENTER_CRITICAL(&paramLock);
-            gpio_set_level(DOUT0, (uint32_t)mb_coil_reg.out0);
-            portEXIT_CRITICAL(&paramLock);
-            xEventGroupClearBits(xEventGroupCoilsReg, MB_REG_COIL0_WR_BIT);
-        }
         if (uxBits & MB_REG_COIL1_WR_BIT) {
             portENTER_CRITICAL(&paramLock);
             gpio_set_level(DOUT1, (uint32_t)mb_coil_reg.out1);
@@ -987,11 +1063,22 @@ void vGpioInit(void)
     };
     gpio_config(&gpioOutputConfig);
 
-    // [FIX-4] Inicializar DOUT0 también, estaba faltando
-    gpio_set_level(DOUT0, 0);
     gpio_set_level(DOUT1, 0);
     gpio_set_level(DOUT2, 0);
     gpio_set_level(DOUT3, 0);
+
+    // LEDs en IO45 e IO46: habilitados y encendidos
+    gpio_config_t gpioLedConfig = {
+        .pin_bit_mask = LED_IO_MASK_CONFIG,
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&gpioLedConfig);
+
+    gpio_set_level(LED_IO45, LED_IO45_ENCENDIDO_AL_INICIO);
+    gpio_set_level(LED_IO46, LED_IO46_ENCENDIDO_AL_INICIO);
 }
 
 
@@ -999,6 +1086,7 @@ void vServosInit(void)
 {
     servo_create(&servo1, SERVO1_CH0_PIN, LEDC_CHANNEL_0);
     servo_create(&servo2, SERVO2_CH1_PIN, LEDC_CHANNEL_1);
+    servo_create(&servo3, SERVO3_CH3_PIN, LEDC_CHANNEL_3);
 }
 
 
@@ -1278,8 +1366,6 @@ void vModbusSlaveInit(void)
 
 void vModbusSlaveControlStop(void)
 {
-    // [FIX-4] DOUT0 incluido en el reset
-    gpio_set_level(DOUT0, 0);
     gpio_set_level(DOUT1, 0);
     gpio_set_level(DOUT2, 0);
     gpio_set_level(DOUT3, 0);
@@ -1294,6 +1380,7 @@ void vModbusSlaveControlStop(void)
     mb_holding_reg.srv1_angle = 0;
     mb_holding_reg.srv2_angle = 0;
     mb_holding_reg.led_pwm    = 0;
+    mb_holding_reg.srv3_angle = 0;
     mb_holding_reg.fw_version = MB_FIRMWARE_REVISION;
     mb_input_reg.imu_pitch    = 0;
     mb_input_reg.imu_roll     = 0;
@@ -1301,7 +1388,6 @@ void vModbusSlaveControlStop(void)
     mb_input_reg.ina_current  = 0;
     mb_input_reg.ina_voltage  = 0;
     mb_input_reg.ina_power    = 0;
-    mb_coil_reg.out0          = 0;
     mb_coil_reg.out1          = 0;
     mb_coil_reg.out2          = 0;
     mb_coil_reg.out3          = 0;
