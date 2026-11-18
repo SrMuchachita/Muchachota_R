@@ -2,10 +2,10 @@ idf_component_register(SRCS "main2.c"
                     INCLUDE_DIRS "."
                     REQUIRES
                         nvs_flash
-                        esp_wifi
-                        esp_netif
+                        bt
                         esp_event
-                        ota_http
+                        app_update
+                        esp_app_format
                         esp_timer
                         esp_driver_gptimer
                         esp_driver_i2c

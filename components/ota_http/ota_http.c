@@ -133,7 +133,7 @@ esp_err_t ota_http_start(const ota_http_config_t *config)
         return ESP_ERR_NO_MEM;
     }
 
-    BaseType_t ok = xTaskCreate(ota_task, "ota_task", 8192, NULL, 5, NULL);
+    BaseType_t ok = xTaskCreate(ota_task, "ota_task", 16384, NULL, 5, NULL);
     if (ok != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
